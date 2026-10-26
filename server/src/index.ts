@@ -39,7 +39,7 @@ app.use(cors({
     if (!origin || process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    if (origin === process.env.CLIENT_URL) {
+    if (!process.env.CLIENT_URL || origin === process.env.CLIENT_URL || origin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));

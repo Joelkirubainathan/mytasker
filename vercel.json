@@ -8,7 +8,7 @@
     "mytasker-api": {
       "root": "server",
       "framework": "express",
-      "buildCommand": "npm install && npm run build"
+      "buildCommand": "npm run build"
     }
   },
   "rewrites": [
