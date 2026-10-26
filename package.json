@@ -1,0 +1,20 @@
+{
+  "name": "mytasker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "build": "cd client && npm run build && cd ../server && npm run build",
+    "start": "cd server && npm start",
+    "setup": "npm install && cd client && npm install && cd ../server && npm install",
+    "db:migrate": "cd server && npm run db:migrate",
+    "db:seed": "cd server && npm run db:seed",
+    "test:report": "node run_tests_and_report.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "exceljs": "^4.4.0"
+  }
+}

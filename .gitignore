@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.local
+server/.env
+*.db
+*.db-shm
+*.db-wal
+data/*.db
+data/*.db-shm
+data/*.db-wal
+.DS_Store
+Thumbs.db
+*.log
+powershell.exe
+.vercel/

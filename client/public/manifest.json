@@ -1,0 +1,17 @@
+{
+  "name": "MyTasker",
+  "short_name": "MyTasker",
+  "description": "Personal Task & Productivity Manager",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e1b4b",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
