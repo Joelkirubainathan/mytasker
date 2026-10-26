@@ -33,21 +33,21 @@ async function checkReminders() {
   try {
     const db = getDb();
     const now = new Date().toISOString();
-    const pending = db.prepare(`
+    const pending = (await db.prepare(`
       SELECT r.*, t.title as task_title, t.user_id, u.notification_settings
       FROM reminders r
       JOIN tasks t ON r.task_id = t.id
       JOIN users u ON t.user_id = u.id
       WHERE r.is_triggered = 0 AND r.reminder_time <= ?
       AND t.status NOT IN ('completed', 'archived')
-    `).all(now) as any[];
+    `).all(now)) as any[];
 
     for (const reminder of pending) {
       let settings: any = {};
       try { settings = JSON.parse(reminder.notification_settings || '{}'); } catch { /* */ }
 
       if (!settings.taskReminders) {
-        db.prepare('UPDATE reminders SET is_triggered = 1 WHERE id = ?').run(reminder.id);
+        await db.prepare('UPDATE reminders SET is_triggered = 1 WHERE id = ?').run(reminder.id);
         continue;
       }
 
@@ -61,7 +61,7 @@ async function checkReminders() {
         reminder.label || `Don't forget: ${reminder.task_title}`
       );
 
-      db.prepare('UPDATE reminders SET is_triggered = 1 WHERE id = ?').run(reminder.id);
+      await db.prepare('UPDATE reminders SET is_triggered = 1 WHERE id = ?').run(reminder.id);
     }
   } catch (error) {
     console.error('Reminder check error:', error);
@@ -74,7 +74,7 @@ async function checkOverdueTasks() {
     const today = new Date().toISOString().slice(0, 10);
 
     // Find newly overdue tasks that haven't been notified today
-    const overdue = db.prepare(`
+    const overdue = (await db.prepare(`
       SELECT t.id, t.title, t.user_id, t.due_date, u.notification_settings
       FROM tasks t
       JOIN users u ON t.user_id = u.id
@@ -83,7 +83,7 @@ async function checkOverdueTasks() {
         SELECT 1 FROM notifications n
         WHERE n.task_id = t.id AND n.type = 'overdue' AND DATE(n.created_at) = ?
       )
-    `).all(today, today) as any[];
+    `).all(today, today)) as any[];
 
     for (const task of overdue) {
       let settings: any = {};
@@ -104,12 +104,12 @@ async function checkOverdueTasks() {
   }
 }
 
-function cleanupOldNotifications() {
+async function cleanupOldNotifications() {
   try {
     const db = getDb();
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('DELETE FROM notifications WHERE created_at < ? AND is_read = 1').run(cutoff);
-    db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ?').run(new Date().toISOString());
+    await db.prepare('DELETE FROM notifications WHERE created_at < ? AND is_read = 1').run(cutoff);
+    await db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ?').run(new Date().toISOString());
   } catch (error) {
     console.error('Cleanup error:', error);
   }

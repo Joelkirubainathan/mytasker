@@ -9,10 +9,10 @@ import { createNotification } from '../services/notificationService';
 const router = Router();
 router.use(authenticate);
 
-function calcProgress(taskId: string): number {
+async function calcProgress(taskId: string): Promise<number> {
   const db = getDb();
-  const subtasks = db.prepare('SELECT is_completed FROM subtasks WHERE task_id = ?').all(taskId) as any[];
-  if (subtasks.length === 0) return -1; // No subtasks, use manual
+  const subtasks = await db.prepare('SELECT is_completed FROM subtasks WHERE task_id = ?').all<any>(taskId);
+  if (subtasks.length === 0) return -1;
   const done = subtasks.filter((s: any) => s.is_completed).length;
   return Math.round((done / subtasks.length) * 100);
 }
@@ -28,7 +28,7 @@ router.get('/', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('history').optional().isBoolean(),
-], (req: AuthRequest, res) => {
+], async (req: AuthRequest, res) => {
   const db = getDb();
   const {
     status, priority, category_id, search,
@@ -60,10 +60,10 @@ router.get('/', [
     default: orderClause = `t.${sort} ${order.toUpperCase()}`;
   }
 
-  const countResult = db.prepare(`SELECT COUNT(*) as total FROM tasks t ${whereClause}`).get(...params) as any;
-  const total = countResult.total;
+  const countResult = await db.prepare(`SELECT COUNT(*) as total FROM tasks t ${whereClause}`).get<any>(...params);
+  const total = countResult?.total ?? 0;
 
-  const tasks = db.prepare(`
+  const tasks = await db.prepare(`
     SELECT t.*, c.name as category_name, c.icon as category_icon, c.color as category_color,
       (SELECT COUNT(*) FROM subtasks WHERE task_id = t.id) as subtask_count,
       (SELECT COUNT(*) FROM subtasks WHERE task_id = t.id AND is_completed = 1) as subtask_done,
@@ -83,21 +83,21 @@ router.get('/', [
 });
 
 // GET /tasks/:id
-router.get('/:id', (req: AuthRequest, res) => {
+router.get('/:id', async (req: AuthRequest, res) => {
   const db = getDb();
-  const task = db.prepare(`
+  const task = await db.prepare(`
     SELECT t.*, c.name as category_name, c.icon as category_icon, c.color as category_color
     FROM tasks t
     LEFT JOIN categories c ON t.category_id = c.id
     WHERE t.id = ? AND t.user_id = ?
-  `).get(req.params.id, req.userId) as any;
+  `).get<any>(req.params.id, req.userId);
 
   if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
 
-  const subtasks = db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position ASC').all(task.id);
-  const reminders = db.prepare('SELECT * FROM reminders WHERE task_id = ? ORDER BY reminder_time ASC').all(task.id);
-  const timeEntries = db.prepare('SELECT * FROM time_entries WHERE task_id = ? ORDER BY started_at DESC').all(task.id);
-  const activity = db.prepare('SELECT * FROM task_activity WHERE task_id = ? ORDER BY created_at DESC LIMIT 50').all(task.id);
+  const subtasks = await db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position ASC').all(task.id);
+  const reminders = await db.prepare('SELECT * FROM reminders WHERE task_id = ? ORDER BY reminder_time ASC').all(task.id);
+  const timeEntries = await db.prepare('SELECT * FROM time_entries WHERE task_id = ? ORDER BY started_at DESC').all(task.id);
+  const activity = await db.prepare('SELECT * FROM task_activity WHERE task_id = ? ORDER BY created_at DESC LIMIT 50').all(task.id);
 
   return res.json({ success: true, data: { ...task, subtasks, reminders, time_entries: timeEntries, activity } });
 });
@@ -121,43 +121,39 @@ router.post('/', [
   } = req.body;
 
   try {
-    // Validate category belongs to user
     if (category_id) {
-      const cat = db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?').get(category_id, req.userId);
+      const cat = await db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?').get(category_id, req.userId);
       if (!cat) return res.status(400).json({ success: false, message: 'Invalid category' });
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO tasks (id, user_id, category_id, title, description, priority, status, progress, start_date, due_date, estimated_minutes, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, req.userId, category_id || null, title, description || null, priority, status, progress,
       start_date || null, due_date || null, estimated_minutes || null, notes || null);
 
-    // Create subtasks if provided
     if (subtaskItems?.length) {
-      const stStmt = db.prepare('INSERT INTO subtasks (id, task_id, title, position) VALUES (?, ?, ?, ?)');
-      subtaskItems.forEach((st: any, i: number) => {
-        stStmt.run(uuidv4(), id, st.title, i);
-      });
+      for (let i = 0; i < subtaskItems.length; i++) {
+        await db.prepare('INSERT INTO subtasks (id, task_id, title, position) VALUES (?, ?, ?, ?)').run(uuidv4(), id, subtaskItems[i].title, i);
+      }
     }
 
-    // Create reminder if provided
     if (req.body.reminder_time) {
-      db.prepare('INSERT INTO reminders (id, task_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?, ?)').run(
+      await db.prepare('INSERT INTO reminders (id, task_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?, ?)').run(
         uuidv4(), id, req.userId, req.body.reminder_time, req.body.reminder_label || null
       );
     }
 
     await recordActivity(id, req.userId!, 'task_created', null, title, { title, priority, status });
 
-    const task = db.prepare(`
+    const task = await db.prepare(`
       SELECT t.*, c.name as category_name, c.icon as category_icon, c.color as category_color
       FROM tasks t LEFT JOIN categories c ON t.category_id = c.id
       WHERE t.id = ?
-    `).get(id);
-    const subs = db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(id);
+    `).get<any>(id);
+    const subs = await db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(id);
 
-    return res.status(201).json({ success: true, data: { ...task as any, subtasks: subs } });
+    return res.status(201).json({ success: true, data: { ...task!, subtasks: subs } });
   } catch (error) {
     console.error('Create task error:', error);
     return res.status(500).json({ success: false, message: 'Failed to create task' });
@@ -172,7 +168,7 @@ router.patch('/:id', [
   body('progress').optional().isInt({ min: 0, max: 100 }),
 ], async (req: AuthRequest, res) => {
   const db = getDb();
-  const existing = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId) as any;
+  const existing = await db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get<any>(req.params.id, req.userId);
   if (!existing) return res.status(404).json({ success: false, message: 'Task not found' });
 
   const allowed = ['title', 'description', 'category_id', 'priority', 'status', 'progress',
@@ -182,22 +178,19 @@ router.patch('/:id', [
 
   for (const field of allowed) {
     if (req.body[field] !== undefined) {
-      // Validate category
       if (field === 'category_id' && req.body[field]) {
-        const cat = db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?').get(req.body[field], req.userId);
+        const cat = await db.prepare('SELECT id FROM categories WHERE id = ? AND user_id = ?').get(req.body[field], req.userId);
         if (!cat) return res.status(400).json({ success: false, message: 'Invalid category' });
       }
       updates.push(`${field} = ?`);
       values.push(req.body[field]);
 
-      // Record changes
       if (['status', 'priority', 'progress'].includes(field) && String(existing[field]) !== String(req.body[field])) {
         await recordActivity(req.params.id, req.userId!, `${field}_changed`, String(existing[field]), String(req.body[field]));
       }
     }
   }
 
-  // Handle completion
   if (req.body.status === 'completed' && existing.status !== 'completed') {
     updates.push('completed_at = ?');
     values.push(new Date().toISOString());
@@ -216,47 +209,45 @@ router.patch('/:id', [
   values.push(new Date().toISOString());
   values.push(req.params.id);
 
-  db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  await db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-  const updated = db.prepare(`
+  const updated = await db.prepare(`
     SELECT t.*, c.name as category_name, c.icon as category_icon, c.color as category_color
     FROM tasks t LEFT JOIN categories c ON t.category_id = c.id WHERE t.id = ?
-  `).get(req.params.id);
-  const subs = db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(req.params.id);
+  `).get<any>(req.params.id);
+  const subs = await db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position').all(req.params.id);
 
-  return res.json({ success: true, data: { ...updated as any, subtasks: subs } });
+  return res.json({ success: true, data: { ...updated!, subtasks: subs } });
 });
 
 // POST /tasks/:id/complete
 router.post('/:id/complete', async (req: AuthRequest, res) => {
   const db = getDb();
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId) as any;
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get<any>(req.params.id, req.userId);
   if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
   if (task.status === 'completed') return res.status(400).json({ success: false, message: 'Task already completed' });
 
   const now = new Date().toISOString();
-  db.prepare(`
-    UPDATE tasks SET status = 'completed', progress = 100, completed_at = ?, updated_at = ? WHERE id = ?
-  `).run(now, now, req.params.id);
+  await db.prepare(`UPDATE tasks SET status = 'completed', progress = 100, completed_at = ?, updated_at = ? WHERE id = ?`).run(now, now, req.params.id);
 
   if (req.body.completion_note) {
-    db.prepare('UPDATE tasks SET completion_note = ? WHERE id = ?').run(req.body.completion_note, req.params.id);
+    await db.prepare('UPDATE tasks SET completion_note = ? WHERE id = ?').run(req.body.completion_note, req.params.id);
   }
 
   await recordActivity(req.params.id, req.userId!, 'task_completed', task.status, 'completed');
   await createNotification(req.userId!, req.params.id, 'task_completed', '✅ Task Completed', `"${task.title}" has been marked as complete!`);
 
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+  const updated = await db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
   return res.json({ success: true, data: updated });
 });
 
 // DELETE /tasks/:id
 router.delete('/:id', async (req: AuthRequest, res) => {
   const db = getDb();
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.userId) as any;
+  const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get<any>(req.params.id, req.userId);
   if (!task) return res.status(404).json({ success: false, message: 'Task not found' });
 
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
   return res.json({ success: true, message: 'Task deleted' });
 });
 

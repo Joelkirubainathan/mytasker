@@ -10,7 +10,7 @@ export async function createNotification(
 ): Promise<void> {
   try {
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO notifications (id, user_id, task_id, type, title, message)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(uuidv4(), userId, taskId, type, title, message);

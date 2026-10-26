@@ -11,10 +11,10 @@ export async function seedDatabase(shouldExit: boolean = false) {
     const db = getDb();
 
     // Check if user already exists
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get('demo@mytasker.app') as any;
+    const existing = (await db.prepare('SELECT id FROM users WHERE email = ?').get('demo@mytasker.app')) as any;
     if (existing) {
       console.log('⚠️ Demo user already exists. Cleaning existing data for demo user...');
-      db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
+      await db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
     }
 
     const userId = uuidv4();
@@ -23,7 +23,7 @@ export async function seedDatabase(shouldExit: boolean = false) {
     const nowIso = now.toISOString();
 
     // 1. Create Demo User
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO users (id, name, email, password_hash, timezone, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(userId, 'Alex Morgan', 'demo@mytasker.app', passwordHash, 'America/New_York', nowIso, nowIso);
@@ -41,7 +41,7 @@ export async function seedDatabase(shouldExit: boolean = false) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const c of categories) {
-      insertCat.run(c.id, userId, c.name, c.icon, c.color, c.description, nowIso, nowIso);
+      await insertCat.run(c.id, userId, c.name, c.icon, c.color, c.description, nowIso, nowIso);
     }
 
     // 3. Sample Tasks with Subtasks and Activities
@@ -69,7 +69,7 @@ export async function seedDatabase(shouldExit: boolean = false) {
 
     // Task 1: In Progress
     const task1Id = uuidv4();
-    insertTask.run(
+    await insertTask.run(
       task1Id, userId, categories[0].id,
       'Finalize Q4 Product Roadmap & Launch Plan',
       'Align with design and engineering leads on key milestones and resource allocation for upcoming sprints.',
@@ -86,16 +86,17 @@ export async function seedDatabase(shouldExit: boolean = false) {
       { title: 'Present roadmap deck to leadership', done: 0 },
       { title: 'Publish finalized schedule in Notion', done: 0 },
     ];
-    t1Subtasks.forEach((st, idx) => {
-      insertSubtask.run(uuidv4(), task1Id, st.title, st.done, idx, yesterday, st.done ? yesterday : null);
-    });
+    for (let idx = 0; idx < t1Subtasks.length; idx++) {
+      const st = t1Subtasks[idx];
+      await insertSubtask.run(uuidv4(), task1Id, st.title, st.done, idx, yesterday, st.done ? yesterday : null);
+    }
 
-    insertActivity.run(uuidv4(), task1Id, userId, 'created', null, 'Finalize Q4 Product Roadmap & Launch Plan', null, yesterday);
-    insertActivity.run(uuidv4(), task1Id, userId, 'status_changed', 'not_started', 'in_progress', null, yesterday);
+    await insertActivity.run(uuidv4(), task1Id, userId, 'created', null, 'Finalize Q4 Product Roadmap & Launch Plan', null, yesterday);
+    await insertActivity.run(uuidv4(), task1Id, userId, 'status_changed', 'not_started', 'in_progress', null, yesterday);
 
     // Task 2: Urgent Not Started
     const task2Id = uuidv4();
-    insertTask.run(
+    await insertTask.run(
       task2Id, userId, categories[3].id,
       'Review and Submit Quarterly Tax Estimates',
       'Consolidate invoices, verify business expenses, and submit payment via accountant portal.',
@@ -110,14 +111,15 @@ export async function seedDatabase(shouldExit: boolean = false) {
       { title: 'Categorize pending receipts in Quickbooks', done: 0 },
       { title: 'Authorize tax accountant transmission', done: 0 },
     ];
-    t2Subtasks.forEach((st, idx) => {
-      insertSubtask.run(uuidv4(), task2Id, st.title, st.done, idx, nowIso, null);
-    });
-    insertActivity.run(uuidv4(), task2Id, userId, 'created', null, 'Review and Submit Quarterly Tax Estimates', null, nowIso);
+    for (let idx = 0; idx < t2Subtasks.length; idx++) {
+      const st = t2Subtasks[idx];
+      await insertSubtask.run(uuidv4(), task2Id, st.title, st.done, idx, nowIso, null);
+    }
+    await insertActivity.run(uuidv4(), task2Id, userId, 'created', null, 'Review and Submit Quarterly Tax Estimates', null, nowIso);
 
     // Task 3: Completed Task
     const task3Id = uuidv4();
-    insertTask.run(
+    await insertTask.run(
       task3Id, userId, categories[1].id,
       'Complete 5K Morning Endurance Run',
       'Outdoor cadence training along the lake loop path.',
@@ -126,15 +128,15 @@ export async function seedDatabase(shouldExit: boolean = false) {
       'Felt great! Average pace 5:20/km.',
       twoDaysAgo, yesterday, yesterday
     );
-    insertSubtask.run(uuidv4(), task3Id, 'Warm up stretches', 1, 0, twoDaysAgo, yesterday);
-    insertSubtask.run(uuidv4(), task3Id, '5K loop running', 1, 1, twoDaysAgo, yesterday);
-    insertSubtask.run(uuidv4(), task3Id, 'Cool down hydration', 1, 2, twoDaysAgo, yesterday);
-    insertActivity.run(uuidv4(), task3Id, userId, 'created', null, 'Complete 5K Morning Endurance Run', null, twoDaysAgo);
-    insertActivity.run(uuidv4(), task3Id, userId, 'completed', 'in_progress', 'completed', null, yesterday);
+    await insertSubtask.run(uuidv4(), task3Id, 'Warm up stretches', 1, 0, twoDaysAgo, yesterday);
+    await insertSubtask.run(uuidv4(), task3Id, '5K loop running', 1, 1, twoDaysAgo, yesterday);
+    await insertSubtask.run(uuidv4(), task3Id, 'Cool down hydration', 1, 2, twoDaysAgo, yesterday);
+    await insertActivity.run(uuidv4(), task3Id, userId, 'created', null, 'Complete 5K Morning Endurance Run', null, twoDaysAgo);
+    await insertActivity.run(uuidv4(), task3Id, userId, 'completed', 'in_progress', 'completed', null, yesterday);
 
     // Task 4: Learning
     const task4Id = uuidv4();
-    insertTask.run(
+    await insertTask.run(
       task4Id, userId, categories[2].id,
       'Study System Design: Distributed Event Streaming',
       'Deep dive into Kafka partition strategies, consumer offsets, and dead-letter queues.',
@@ -143,23 +145,23 @@ export async function seedDatabase(shouldExit: boolean = false) {
       'Chapter 4 of Designing Data-Intensive Applications.',
       nowIso, nowIso, null
     );
-    insertSubtask.run(uuidv4(), task4Id, 'Read DDIA Chapter 4 notes', 1, 0, nowIso, nowIso);
-    insertSubtask.run(uuidv4(), task4Id, 'Build mini consumer group prototype', 0, 1, nowIso, null);
-    insertActivity.run(uuidv4(), task4Id, userId, 'created', null, 'Study System Design: Distributed Event Streaming', null, nowIso);
+    await insertSubtask.run(uuidv4(), task4Id, 'Read DDIA Chapter 4 notes', 1, 0, nowIso, nowIso);
+    await insertSubtask.run(uuidv4(), task4Id, 'Build mini consumer group prototype', 0, 1, nowIso, null);
+    await insertActivity.run(uuidv4(), task4Id, userId, 'created', null, 'Study System Design: Distributed Event Streaming', null, nowIso);
 
     // 4. Sample Reminder
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO reminders (id, task_id, user_id, reminder_time, label, is_triggered, created_at)
       VALUES (?, ?, ?, ?, ?, 0, ?)
     `).run(uuidv4(), task2Id, userId, tomorrow, 'Tax submission deadline in 24 hours', nowIso);
 
     // 5. Sample Notifications
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO notifications (id, user_id, task_id, type, title, message, is_read, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     `).run(uuidv4(), userId, task2Id, 'reminder', 'Upcoming Task Deadline', 'Review and Submit Quarterly Tax Estimates is due tomorrow!', nowIso);
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO notifications (id, user_id, task_id, type, title, message, is_read, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 1, ?)
     `).run(uuidv4(), userId, task3Id, 'task_completed', 'Task Completed! 🎉', 'You crushed "Complete 5K Morning Endurance Run". Keep up the momentum!', yesterday);

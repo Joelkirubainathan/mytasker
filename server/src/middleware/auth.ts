@@ -14,7 +14,7 @@ interface JwtPayload {
   exp: number;
 }
 
-export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function authenticate(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -31,7 +31,7 @@ export function authenticate(req: AuthRequest, res: Response, next: NextFunction
 
     // Verify user still exists
     const db = getDb();
-    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(payload.userId);
+    const user = await db.prepare('SELECT id FROM users WHERE id = ?').get(payload.userId);
     if (!user) {
       res.status(401).json({ success: false, message: 'User no longer exists' });
       return;

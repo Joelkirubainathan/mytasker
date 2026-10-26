@@ -11,7 +11,7 @@ export async function recordActivity(
 ): Promise<void> {
   try {
     const db = getDb();
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO task_activity (id, task_id, user_id, action, old_value, new_value, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(

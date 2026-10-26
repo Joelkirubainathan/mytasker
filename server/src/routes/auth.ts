@@ -30,7 +30,7 @@ function generateTokens(userId: string, email: string) {
   return { accessToken, refreshToken };
 }
 
-function seedDefaultCategories(userId: string) {
+async function seedDefaultCategories(userId: string) {
   const db = getDb();
   const defaults = [
     { name: 'College', icon: '🎓', color: '#6366f1' },
@@ -41,12 +41,9 @@ function seedDefaultCategories(userId: string) {
     { name: 'Exams', icon: '📝', color: '#ef4444' },
   ];
 
-  const stmt = db.prepare(`
-    INSERT INTO categories (id, user_id, name, icon, color) VALUES (?, ?, ?, ?, ?)
-  `);
-
   for (const cat of defaults) {
-    stmt.run(uuidv4(), userId, cat.name, cat.icon, cat.color);
+    await db.prepare(`INSERT INTO categories (id, user_id, name, icon, color) VALUES (?, ?, ?, ?, ?)`)
+      .run(uuidv4(), userId, cat.name, cat.icon, cat.color);
   }
 }
 
@@ -65,8 +62,7 @@ router.post('/register', authLimiter, [
   const db = getDb();
 
   try {
-    // Check existing user
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (existing) {
       return res.status(409).json({ success: false, message: 'An account with this email already exists' });
     }
@@ -74,23 +70,19 @@ router.post('/register', authLimiter, [
     const id = uuidv4();
     const passwordHash = await bcrypt.hash(password, 12);
 
-    db.prepare(`
-      INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)
-    `).run(id, name, email, passwordHash);
+    await db.prepare(`INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)`).run(id, name, email, passwordHash);
 
-    // Seed default categories
-    seedDefaultCategories(id);
+    await seedDefaultCategories(id);
 
     const { accessToken, refreshToken } = generateTokens(id, email);
 
-    // Store refresh token hash
     const refreshHash = await bcrypt.hash(refreshToken, 8);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
+    await db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
       uuidv4(), id, refreshHash, expiresAt
     );
 
-    const user = db.prepare('SELECT id, name, email, avatar, created_at FROM users WHERE id = ?').get(id);
+    const user = await db.prepare('SELECT id, name, email, avatar, created_at FROM users WHERE id = ?').get(id);
 
     return res.status(201).json({
       success: true,
@@ -117,7 +109,7 @@ router.post('/login', authLimiter, [
   const db = getDb();
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    const user = await db.prepare('SELECT * FROM users WHERE email = ?').get<any>(email);
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
@@ -131,7 +123,7 @@ router.post('/login', authLimiter, [
 
     const refreshHash = await bcrypt.hash(refreshToken, 8);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
+    await db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
       uuidv4(), user.id, refreshHash, expiresAt
     );
 
@@ -162,9 +154,9 @@ router.post('/refresh', async (req, res) => {
     const payload = jwt.verify(refreshToken, secret) as any;
     const db = getDb();
 
-    const tokens = db.prepare('SELECT * FROM refresh_tokens WHERE user_id = ? AND expires_at > ?').all(
+    const tokens = await db.prepare('SELECT * FROM refresh_tokens WHERE user_id = ? AND expires_at > ?').all<any>(
       payload.userId, new Date().toISOString()
-    ) as any[];
+    );
 
     let valid = false;
     let tokenId = '';
@@ -180,13 +172,12 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
 
-    // Rotate refresh token
-    db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(tokenId);
+    await db.prepare('DELETE FROM refresh_tokens WHERE id = ?').run(tokenId);
 
     const { accessToken, refreshToken: newRefreshToken } = generateTokens(payload.userId, payload.email);
     const refreshHash = await bcrypt.hash(newRefreshToken, 8);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
+    await db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)').run(
       uuidv4(), payload.userId, refreshHash, expiresAt
     );
 
@@ -197,10 +188,10 @@ router.post('/refresh', async (req, res) => {
 });
 
 // POST /auth/logout
-router.post('/logout', authenticate, (req: AuthRequest, res) => {
+router.post('/logout', authenticate, async (req: AuthRequest, res) => {
   const db = getDb();
   try {
-    db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(req.userId);
+    await db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(req.userId);
     return res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Logout failed' });
@@ -208,9 +199,9 @@ router.post('/logout', authenticate, (req: AuthRequest, res) => {
 });
 
 // GET /auth/me
-router.get('/me', authenticate, (req: AuthRequest, res) => {
+router.get('/me', authenticate, async (req: AuthRequest, res) => {
   const db = getDb();
-  const user = db.prepare('SELECT id, name, email, avatar, timezone, notification_settings, created_at FROM users WHERE id = ?').get(req.userId) as any;
+  const user = await db.prepare('SELECT id, name, email, avatar, timezone, notification_settings, created_at FROM users WHERE id = ?').get<any>(req.userId);
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
   try {

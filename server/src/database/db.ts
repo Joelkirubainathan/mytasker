@@ -1,45 +1,48 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+/**
+ * db.ts — LibSQL/Turso adapter
+ *
+ * Provides a thin async wrapper over @libsql/client that mimics
+ * the better-sqlite3 `.prepare(sql).get/all/run/exec` surface.
+ * 
+ * Usage: const db = getDb(); then await db.get(sql, params), etc.
+ */
 
-let db: Database.Database;
+import { createClient, type Client } from '@libsql/client';
 
-export function getDb(): Database.Database {
-  if (!db) {
+let client: Client | null = null;
+
+export function getDb(): AsyncDb {
+  if (!client) {
     throw new Error('Database not initialized. Call initializeDatabase() first.');
   }
-  return db;
+  return new AsyncDb(client);
 }
 
 export async function initializeDatabase(): Promise<void> {
-  if (db) return;
+  if (client) return;
 
-  let dbPath = process.env.DATABASE_URL || './data/mytasker.db';
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    dbPath = '/tmp/mytasker.db';
+  // In serverless (Vercel), TURSO_DATABASE_URL must be set.
+  // In local dev, fall back to a local file.
+  const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL;
+  const authToken = process.env.TURSO_AUTH_TOKEN;
+
+  if (url && url.startsWith('libsql://')) {
+    client = createClient({ url, authToken: authToken! });
+  } else if (url && (url.startsWith('file:') || url.startsWith('./') || url.startsWith('/'))) {
+    // Local file-based SQLite (development)
+    client = createClient({ url: url.startsWith('file:') ? url : `file:${url}` });
+  } else {
+    // Default local dev database
+    client = createClient({ url: 'file:./data/mytasker.db' });
   }
-  const dir = path.dirname(dbPath);
 
-  // Ensure directory exists
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  await createTables();
 
-  db = new Database(dbPath);
-
-  // Performance settings
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('synchronous = NORMAL');
-  db.pragma('cache_size = -64000'); // 64MB cache
-
-  // Create tables
-  createTables();
-
-  // If in serverless environment and database is brand new, auto-seed demo user
+  // Auto-seed on fresh DB
   try {
-    const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any)?.c || 0;
-    if (userCount === 0) {
+    const result = await client.execute('SELECT COUNT(*) as c FROM users');
+    const count = Number((result.rows[0] as any)?.c ?? 0);
+    if (count === 0) {
       const { seedDatabase } = await import('./seed');
       await seedDatabase(false);
     }
@@ -48,11 +51,9 @@ export async function initializeDatabase(): Promise<void> {
   }
 }
 
-function createTables(): void {
-  const d = getDb();
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS users (
+async function createTables(): Promise<void> {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
@@ -62,17 +63,15 @@ function createTables(): void {
       notification_settings TEXT DEFAULT '{"taskReminders":true,"dueDateReminders":true,"overdueNotifications":true,"recurringReminders":true,"quietHoursEnabled":false,"quietHoursStart":"22:00","quietHoursEnd":"07:00"}',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS refresh_tokens (
+    )`,
+    `CREATE TABLE IF NOT EXISTS refresh_tokens (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       token_hash TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS categories (
+    )`,
+    `CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
@@ -81,17 +80,16 @@ function createTables(): void {
       description TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS tasks (
+    )`,
+    `CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       description TEXT,
-      status TEXT NOT NULL DEFAULT 'not_started' CHECK(status IN ('not_started','in_progress','paused','completed','archived')),
-      priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low','medium','high','urgent')),
-      progress INTEGER NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+      status TEXT NOT NULL DEFAULT 'not_started',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      progress INTEGER NOT NULL DEFAULT 0,
       start_date TEXT,
       due_date TEXT,
       estimated_minutes INTEGER,
@@ -104,9 +102,8 @@ function createTables(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT,
       archived_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS subtasks (
+    )`,
+    `CREATE TABLE IF NOT EXISTS subtasks (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
@@ -114,9 +111,8 @@ function createTables(): void {
       position INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS time_entries (
+    )`,
+    `CREATE TABLE IF NOT EXISTS time_entries (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -125,9 +121,8 @@ function createTables(): void {
       duration_minutes REAL,
       note TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS reminders (
+    )`,
+    `CREATE TABLE IF NOT EXISTS reminders (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -135,9 +130,8 @@ function createTables(): void {
       label TEXT,
       is_triggered INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS notifications (
+    )`,
+    `CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
@@ -146,9 +140,8 @@ function createTables(): void {
       message TEXT NOT NULL,
       is_read INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS task_activity (
+    )`,
+    `CREATE TABLE IF NOT EXISTS task_activity (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -157,21 +150,106 @@ function createTables(): void {
       new_value TEXT,
       metadata TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_tasks_category_id ON tasks(category_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_time_entries_task_id ON time_entries(task_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_reminders_triggered ON reminders(is_triggered)`,
+    `CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read)`,
+    `CREATE INDEX IF NOT EXISTS idx_task_activity_task_id ON task_activity(task_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
+  ];
 
-    -- Indexes
-    CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
-    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-    CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
-    CREATE INDEX IF NOT EXISTS idx_tasks_category_id ON tasks(category_id);
-    CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id);
-    CREATE INDEX IF NOT EXISTS idx_time_entries_task_id ON time_entries(task_id);
-    CREATE INDEX IF NOT EXISTS idx_reminders_user_id ON reminders(user_id);
-    CREATE INDEX IF NOT EXISTS idx_reminders_triggered ON reminders(is_triggered);
-    CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
-    CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
-    CREATE INDEX IF NOT EXISTS idx_task_activity_task_id ON task_activity(task_id);
-    CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id);
-    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
-  `);
+  for (const sql of statements) {
+    await client!.execute(sql);
+  }
+}
+
+/**
+ * AsyncDb — async wrapper with a .prepare() interface for compatibility.
+ * Routes call: const db = getDb(); await db.get(sql, args), etc.
+ */
+export class AsyncDb {
+  constructor(private c: Client) {}
+
+  /** Execute a query returning the first row, or null */
+  async get<T = any>(sql: string, ...args: any[]): Promise<T | null> {
+    const params = flatArgs(args);
+    const result = await this.c.execute({ sql, args: params });
+    if (result.rows.length === 0) return null;
+    return rowToObject(result.rows[0], result.columns) as T;
+  }
+
+  /** Execute a query returning all rows */
+  async all<T = any>(sql: string, ...args: any[]): Promise<T[]> {
+    const params = flatArgs(args);
+    const result = await this.c.execute({ sql, args: params });
+    return result.rows.map(row => rowToObject(row, result.columns)) as T[];
+  }
+
+  /** Execute an INSERT/UPDATE/DELETE */
+  async run(sql: string, ...args: any[]): Promise<void> {
+    const params = flatArgs(args);
+    await this.c.execute({ sql, args: params });
+  }
+
+  /** Execute multiple statements (DDL) */
+  async exec(sql: string): Promise<void> {
+    const stmts = sql.split(';').map(s => s.trim()).filter(Boolean);
+    for (const stmt of stmts) {
+      await this.c.execute(stmt);
+    }
+  }
+
+  /**
+   * Compatibility shim: db.prepare(sql).get/all/run/exec(args)
+   * Returns a PreparedStatement-like object.
+   */
+  prepare(sql: string): PreparedStatement {
+    return new PreparedStatement(this.c, sql);
+  }
+}
+
+class PreparedStatement {
+  constructor(private c: Client, private sql: string) {}
+
+  async get<T = any>(...args: any[]): Promise<T | null> {
+    const params = flatArgs(args);
+    const result = await this.c.execute({ sql: this.sql, args: params });
+    if (result.rows.length === 0) return null;
+    return rowToObject(result.rows[0], result.columns) as T;
+  }
+
+  async all<T = any>(...args: any[]): Promise<T[]> {
+    const params = flatArgs(args);
+    const result = await this.c.execute({ sql: this.sql, args: params });
+    return result.rows.map(row => rowToObject(row, result.columns)) as T[];
+  }
+
+  async run(...args: any[]): Promise<void> {
+    const params = flatArgs(args);
+    await this.c.execute({ sql: this.sql, args: params });
+  }
+}
+
+function flatArgs(args: any[]): any[] {
+  if (args.length === 1 && Array.isArray(args[0])) return args[0];
+  return args;
+}
+
+function rowToObject(row: any, columns: readonly string[]): Record<string, any> {
+  const obj: Record<string, any> = {};
+  for (let i = 0; i < columns.length; i++) {
+    let val = row[i];
+    // Convert BigInt to number
+    if (typeof val === 'bigint') val = Number(val);
+    obj[columns[i]] = val;
+  }
+  return obj;
 }
