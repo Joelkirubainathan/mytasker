@@ -26,8 +26,12 @@ export async function initializeDatabase(): Promise<void> {
   const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL;
   const authToken = process.env.TURSO_AUTH_TOKEN;
 
-  if (url && url.startsWith('libsql://')) {
-    client = createClient({ url, authToken: authToken! });
+  if (url && (url.startsWith('libsql://') || url.startsWith('https://'))) {
+    client = createClient({ url, authToken: authToken || undefined });
+  } else if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    // In serverless without Turso, fall back to /tmp
+    console.warn('⚠️ TURSO_DATABASE_URL not set in Vercel. Falling back to /tmp/mytasker.db');
+    client = createClient({ url: 'file:/tmp/mytasker.db' });
   } else if (url && (url.startsWith('file:') || url.startsWith('./') || url.startsWith('/'))) {
     // Local file-based SQLite (development)
     client = createClient({ url: url.startsWith('file:') ? url : `file:${url}` });
