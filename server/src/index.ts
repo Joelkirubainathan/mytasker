@@ -133,8 +133,9 @@ async function main() {
   }
 }
 
-if (require.main === module || (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME)) {
+if (require.main === module && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
   main();
 }
 
+module.exports = app;
 export default app;

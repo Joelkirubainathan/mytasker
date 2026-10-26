@@ -7,6 +7,8 @@
  * Usage: const db = getDb(); then await db.get(sql, params), etc.
  */
 
+import fs from 'fs';
+import path from 'path';
 import { createClient, type Client } from '@libsql/client';
 
 let client: Client | null = null;
@@ -29,15 +31,18 @@ export async function initializeDatabase(): Promise<void> {
   if (url && (url.startsWith('libsql://') || url.startsWith('https://'))) {
     client = createClient({ url, authToken: authToken || undefined });
   } else if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    // In serverless without Turso, fall back to /tmp
+    // In serverless without Turso, fall back to writable /tmp
     console.warn('⚠️ TURSO_DATABASE_URL not set in Vercel. Falling back to /tmp/mytasker.db');
     client = createClient({ url: 'file:/tmp/mytasker.db' });
-  } else if (url && (url.startsWith('file:') || url.startsWith('./') || url.startsWith('/'))) {
-    // Local file-based SQLite (development)
-    client = createClient({ url: url.startsWith('file:') ? url : `file:${url}` });
   } else {
-    // Default local dev database
-    client = createClient({ url: 'file:./data/mytasker.db' });
+    // Local dev: resolve path and ensure directory exists
+    const rawPath = url && url.startsWith('file:') ? url.slice(5) : (url || './data/mytasker.db');
+    const absPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
+    const dir = path.dirname(absPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    client = createClient({ url: `file:${absPath}` });
   }
 
   await createTables();
