@@ -26,9 +26,4 @@ services:
         value: 900000
       - key: RATE_LIMIT_MAX
         value: 1000
-      - key: AUTH_RATE_LIMIT_MAX
-        value: 100
-    disk:
-      name: mytasker-db
-      mountPath: /data
-      sizeGB: 1
+    plan: free
