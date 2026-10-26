@@ -89,9 +89,9 @@ router.post('/register', authLimiter, [
       message: 'Account created successfully',
       data: { user, accessToken, refreshToken },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Register error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to create account' });
+    return res.status(500).json({ success: false, message: 'Failed to create account', details: error?.message || String(error) });
   }
 });
 
@@ -136,9 +136,9 @@ router.post('/login', authLimiter, [
         refreshToken,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Login error:', error);
-    return res.status(500).json({ success: false, message: 'Login failed' });
+    return res.status(500).json({ success: false, message: 'Login failed', details: error?.message || String(error) });
   }
 });
 
