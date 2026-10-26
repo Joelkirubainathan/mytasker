@@ -5,10 +5,9 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { initializeDatabase, getDb } from './db';
 
-async function seed() {
+export async function seedDatabase(shouldExit: boolean = false) {
   console.log('🌱 Seeding database...');
   try {
-    await initializeDatabase();
     const db = getDb();
 
     // Check if user already exists
@@ -170,11 +169,17 @@ async function seed() {
     console.log('📧 Demo Account: demo@mytasker.app');
     console.log('🔑 Password:     Password123!');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    process.exit(0);
+    if (shouldExit) {
+      process.exit(0);
+    }
   } catch (err) {
     console.error('❌ Seeding failed:', err);
-    process.exit(1);
+    if (shouldExit) {
+      process.exit(1);
+    }
   }
 }
 
-seed();
+if (require.main === module) {
+  initializeDatabase().then(() => seedDatabase(true));
+}

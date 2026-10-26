@@ -12,7 +12,12 @@ export function getDb(): Database.Database {
 }
 
 export async function initializeDatabase(): Promise<void> {
-  const dbPath = process.env.DATABASE_URL || './data/mytasker.db';
+  if (db) return;
+
+  let dbPath = process.env.DATABASE_URL || './data/mytasker.db';
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    dbPath = '/tmp/mytasker.db';
+  }
   const dir = path.dirname(dbPath);
 
   // Ensure directory exists
@@ -30,6 +35,17 @@ export async function initializeDatabase(): Promise<void> {
 
   // Create tables
   createTables();
+
+  // If in serverless environment and database is brand new, auto-seed demo user
+  try {
+    const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any)?.c || 0;
+    if (userCount === 0) {
+      const { seedDatabase } = await import('./seed');
+      await seedDatabase(false);
+    }
+  } catch (err) {
+    console.warn('Auto-seed check note:', err);
+  }
 }
 
 function createTables(): void {

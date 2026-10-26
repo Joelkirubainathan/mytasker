@@ -72,6 +72,16 @@ const globalLimiter = rateLimit({
 });
 app.use('/api/', globalLimiter);
 
+// Ensure DB initialization in serverless environments (Vercel)
+app.use(async (_req, _res, next) => {
+  try {
+    await initializeDatabase();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Health check
 app.get('/api/health', (_req, res) => {
   res.json({ success: true, message: 'MyTasker API is running', timestamp: new Date().toISOString() });
@@ -103,7 +113,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   });
 });
 
-// Initialize DB and start server
+// Initialize DB and start server in standalone environments
 async function main() {
   try {
     await initializeDatabase();
@@ -123,4 +133,8 @@ async function main() {
   }
 }
 
-main();
+if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  main();
+}
+
+export default app;
